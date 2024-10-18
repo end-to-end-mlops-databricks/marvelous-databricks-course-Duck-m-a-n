@@ -11,6 +11,8 @@ __pycache__/
 
 # Folders
 # data/
+# Ignore the untracked data folder
+untracked/
 
 # Distribution / packaging
 .Python

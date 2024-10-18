@@ -20,7 +20,8 @@ dependencies = ["lightgbm>=4.5.0, <5",
 dev = ["databricks-connect>=15.4.1, <16",
        "databricks-sdk>=0.32.0, <0.33",
        "ipykernel>=6.29.5, <7",
-       "pip>=24.2"]
+       "pip>=24.2",
+       "pre-commit>=3.4.0, <4"]
 
 [tool.ruff]
 line-length = 120
