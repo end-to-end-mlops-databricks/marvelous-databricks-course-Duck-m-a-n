@@ -45,7 +45,7 @@ try:
     if train_df.empty or test_df.empty:
         raise ValueError("Data splitting resulted in empty DataFrame(s)")
 except Exception as e:
-    logger.error(f"error during datat splitting: {e}")
+    logger.error(f"error during data splitting: {e}")
     raise
 
 #####################################################################

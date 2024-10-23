@@ -29,6 +29,9 @@ class DataChecker:
         train_nulls = self.train_df.isnull().sum()
         test_nulls = self.test_df.isnull().sum()
 
+        train_nulls = train_nulls[train_nulls > 0]
+        test_nulls = test_nulls[test_nulls > 0]
+
         message = (
             f"\nTrain DataFrame Shape: {self.train_df.shape}\n"
             f"Test DataFrame Shape: {self.test_df.shape}\n"
@@ -50,16 +53,21 @@ class DataChecker:
         # Pre-sort data to optimize performance 
         df = df.sort_values(['unique_id', 'ds'])
 
-        missing_series = []
-        for unique_id, group in df.groupby('unique_id'):
-            all_dates = pd.date_range(start=group['ds'].min(), end=group['ds'].max(), freq='D')
-            missing_dates = all_dates.difference(group['ds'])
-            if not missing_dates.empty:
-                missing_series.append(f"Missing dates found for series {unique_id}: {missing_dates.strftime('%Y-%m-%d').tolist()}")
+        # Create a DataFrame with all possible combinations of unique_id and dates
+        unique_ids = df['unique_id'].unique()
+        all_dates = pd.date_range(df['ds'].min(), df['ds'].max(), freq='D')
+        all_combinations = pd.MultiIndex.from_product([unique_ids, all_dates], names=['unique_id', 'ds']).to_frame(index=False)
 
-        if missing_series:
+        # Merge with the original DataFrame to find missing entries
+        merged_df = all_combinations.merge(df, on=['unique_id', 'ds'], how='left', indicator=True)
+        missing = merged_df[merged_df['_merge'] == 'left_only']
+        
+        # Construct message from missing_series
+        if not missing.empty:
+            missing_series = missing.groupby('unique_id')['ds'].apply(lambda dates: dates.dt.strftime('%Y-%m-%d').tolist())
             return "\n".join(missing_series)
-        return "No missing timestamp gaps found in any time series."
+        if missing.empty:
+            return "No missing timestamp gaps found in any time series."
 
     def unique_id_per_date_check(self, df: pd.DataFrame) -> str:
         """Checks for duplicate unique_id per date and returns a message."""
@@ -67,8 +75,7 @@ class DataChecker:
         if not required_columns.issubset(df.columns):
             raise ValueError(f"Dataframe must contain columns: {required_columns}")
         
-        duplicates = df.groupby(['unique_id', 'ds']).size().reset_index(name='count')
-        duplicates = duplicates[duplicates['count'] > 1]
+        duplicates = df[df.duplicated(subset=['unique_id', 'ds'], keep=False)]
 
         if not duplicates.empty:
             formatted_duplicates = duplicates.to_string(index=False)  

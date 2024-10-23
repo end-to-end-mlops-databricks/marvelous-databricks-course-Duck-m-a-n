@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 import logging
 
 # Set up logging
@@ -136,7 +135,7 @@ class DataProcessor:
     def split_data(self):
         """Splits the processed data into train and test sets based on the horizon from the config."""
         if self.processor is None:
-            raise ValueError("Data has not been processed. Please call 'prcoess_data' before 'split_data")
+            raise ValueError("Data has not been processed. Please call 'process_data' before 'split_data")
         horizon = self.horizon
         train_list = []
         test_list = []
