@@ -1,0 +1,8 @@
+# Path to local data
+sales_filepath: "/Users/duckman/Projects/marvelous-databricks-course-Duck-m-a-n/data/sales_train_evaluation.csv"
+calendar_filepath: "/Users/duckman/Projects/marvelous-databricks-course-Duck-m-a-n/data/calendar.csv"
+sell_prices_filepath: "/Users/duckman/Projects/marvelous-databricks-course-Duck-m-a-n/data/sell_prices.csv"
+
+# forecast horizon
+horizon: 28
+
