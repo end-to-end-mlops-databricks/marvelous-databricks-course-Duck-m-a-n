@@ -13,13 +13,13 @@ Marvelous MLOps End-to-end MLOps with Databricks course
 
 
 ## Set up your environment
-In this course, we use Databricks 15.4 LTS runtime, which uses Python 3.12.7 
+In this course, we use Databricks 15.4 LTS runtime, which uses Python 3.11.0 
 In our examples, we use UV. Check out the documentation on how to install it: https://docs.astral.sh/uv/getting-started/installation/
 
 To create a new environment and create a lockfile, run:
 
 ```
-uv venv -p 3.12.7 .venv
+uv venv -p 3.11.0 .venv
 source .venv/bin/activate
 uv pip install -r pyproject.toml --all-extras
 uv lock

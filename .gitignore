@@ -10,14 +10,13 @@ __pycache__/
 *.so
 
 # Folders
-# data/
-# Ignore the untracked data folder
-untracked/
+data/
 
 # Distribution / packaging
 .Python
 build/
 develop-eggs/
+dist/
 dist/
 downloads/
 eggs/
@@ -97,3 +96,5 @@ dmypy.json
 # VS code configuration
 .vscode
 .history
+
+.databricks
