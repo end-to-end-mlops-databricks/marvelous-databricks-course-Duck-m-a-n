@@ -1,13 +1,15 @@
 # Test for single series unique_id = "FOODS_1_001_CA_1"
 
-from m5_forecasting.data_processor import DataProcessor
-from m5_forecasting.utils import DataChecker
-import yaml
 import logging
 from pathlib import Path
 
+import yaml
+
+from m5_forecasting.data_processor import DataProcessor
+from m5_forecasting.utils import DataChecker
+
 # Set up logging configuration
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Create a logger specific to this module
 logger = logging.getLogger(__name__)
@@ -36,7 +38,7 @@ try:
 except Exception as e:
     logger.error(f"Error during data processing: {e}")
     raise
-logger.info(f"Data processing completed.")
+logger.info("Data processing completed.")
 
 # Split into train and test sets
 logger.info("Splitting data into train and test sets...")
@@ -53,27 +55,25 @@ except Exception as e:
 logger.info("Initializing DataChecker...")
 data_checker = DataChecker(train_df, test_df, data_processor.original_row_count, data_processor.filtered_row_count)
 
-# Run validation checks  
-validation_results = {  
-    "row_drop_summary": data_checker.not_sales_row_drop_summary_check(),  
-    "train_missing_dates": data_checker.gaps_in_date_check(train_df),  
-    "test_missing_dates": data_checker.gaps_in_date_check(test_df),  
-    "train_duplicates": data_checker.unique_id_per_date_check(train_df),  
-    "test_duplicates": data_checker.unique_id_per_date_check(test_df),  
-    "data_quality": data_checker.nulls_and_shape_check()  
-}  
+# Run validation checks
+validation_results = {
+    "row_drop_summary": data_checker.not_sales_row_drop_summary_check(),
+    "train_missing_dates": data_checker.gaps_in_date_check(train_df),
+    "test_missing_dates": data_checker.gaps_in_date_check(test_df),
+    "train_duplicates": data_checker.unique_id_per_date_check(train_df),
+    "test_duplicates": data_checker.unique_id_per_date_check(test_df),
+    "data_quality": data_checker.nulls_and_shape_check(),
+}
 
-# Log individual results  
-for check_name, result in validation_results.items():  
-    logger.info(f"{check_name}: {result}")  
+# Log individual results
+for check_name, result in validation_results.items():
+    logger.info(f"{check_name}: {result}")
 
-# Determine overall validation status  
-validation_passed = all(  
-    "error" not in str(result).lower() 
-    and "failed" not in str(result).lower()  
-    for result in validation_results.values()  
-)  
+# Determine overall validation status
+validation_passed = all(
+    "error" not in str(result).lower() and "failed" not in str(result).lower() for result in validation_results.values()
+)
 
-logger.info(f"Data validation {'passed' if validation_passed else 'failed'}")  
+logger.info(f"Data validation {'passed' if validation_passed else 'failed'}")
 
 logger.info("Data checking completed.")

@@ -30,14 +30,14 @@ dev = ["databricks-connect>=15.4.1, <16",
 
 [tool.ruff]
 line-length = 120
-select = [
+lint.select = [
     "F",  # pyflakes rules
     "E",  # pycodestyle error rules
     "W",  # pycodestyle warning rules
     "B",  # flake8-bugbear rules
     "I",  # isort rules
 ]
-ignore = [
+lint.ignore = [
     "E501",  # line-too-long
 ]
 
