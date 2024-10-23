@@ -12,6 +12,9 @@ class DataChecker:
         dropped_row_count = self.original_row_count - self.filtered_row_count
         drop_percentage = (dropped_row_count / self.original_row_count) * 100
         
+        if self.original_row_count < self.filtered_row_count:
+            raise ValueError("Filtered row count cannot be greater than original row count.")
+        
         message = (
             f"\nOriginal row count:                   {self.original_row_count}\n"
             f"Filter rows before release row count: {self.filtered_row_count}\n"
@@ -37,22 +40,40 @@ class DataChecker:
 
     def gaps_in_date_check(self, df):
         """Checks for missing dates (gaps) in each time series grouped by unique_id and returns a message."""
+        required_columns = {'unique_id', 'ds'}
+        if not required_columns.issubset(df.columns):
+            raise ValueError(f"Dataframe must contain columns: {required_columns}")
+        
+        # Convert to datetime if not already
+        df['ds'] = pd.to_datetime(df['ds'])
+
+        # Pre-sort data to optimize performance 
+        df = df.sort_values(['unique_id', 'ds'])
+
         missing_series = []
         for unique_id, group in df.groupby('unique_id'):
             all_dates = pd.date_range(start=group['ds'].min(), end=group['ds'].max(), freq='D')
             missing_dates = all_dates.difference(group['ds'])
             if not missing_dates.empty:
-                missing_series.append(f"Missing dates found for series {unique_id}: {missing_dates}")
+                missing_series.append(f"Missing dates found for series {unique_id}: {missing_dates.strftime('%Y-%m-%d').tolist()}")
 
         if missing_series:
             return "\n".join(missing_series)
         return "No missing timestamp gaps found in any time series."
 
-    def unique_id_per_date_check(self, df):
+    def unique_id_per_date_check(self, df: pd.DataFrame) -> str:
         """Checks for duplicate unique_id per date and returns a message."""
+        required_columns = {'unique_id', 'ds'}
+        if not required_columns.issubset(df.columns):
+            raise ValueError(f"Dataframe must contain columns: {required_columns}")
+        
         duplicates = df.groupby(['unique_id', 'ds']).size().reset_index(name='count')
         duplicates = duplicates[duplicates['count'] > 1]
 
         if not duplicates.empty:
-            return f"Duplicate entries found for the following unique_id and ds combinations:\n{duplicates}"
-        return "No duplicate unique_id for any date found."
+            formatted_duplicates = duplicates.to_string(index=False)  
+            return (  
+                "Duplicate entries found for the following unique_id and ds combinations:\n"  
+                f"{formatted_duplicates}"  
+            )  
+        return "No duplicate unique_id for any date found." 

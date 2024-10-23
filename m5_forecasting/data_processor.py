@@ -8,6 +8,10 @@ logger = logging.getLogger(__name__)
 class DataProcessor:
     def __init__(self, config):
         """Initialize the DataProcessor with configuration details."""
+        required_keys = ['sales_filepath', 'calendar_filepath', 'sell_prices_filepath', 'horizon']  
+        for key in required_keys:
+            if key not in config:
+                raise KeyError(f"Missing required configuration key: {key}")  
         self.config = config
         self.sales_data = self.load_data(config['sales_filepath'])
         self.calendar = self.load_data(config['calendar_filepath'])
@@ -22,7 +26,16 @@ class DataProcessor:
     def load_data(self, filepath):
         """Loads data from the specified file path."""
         logger.info(f"Loading data from {filepath}")
-        return pd.read_csv(filepath)
+        try:
+            return pd.read_csv(filepath)
+        except FileNotFoundError:
+            logger.error(f"The file {filepath} was not found.")
+            raise
+        except pd.errors.EmptyDataError:
+            logger.error(f"The file {filepath} is empty.")    
+            raise
+
+
 
     def process_data(self):
         """Processes the data by applying necessary transformations and preparing for train-test split."""
@@ -68,7 +81,6 @@ class DataProcessor:
 
         # Set processed data to self.processor
         self.processor = self.sales_data
-        
         return self.processor
 
     def prepare_calendar(self):
@@ -100,7 +112,8 @@ class DataProcessor:
         self.sales_data['day_of_week'] = self.sales_data['ds'].dt.dayofweek
         self.sales_data['is_weekend'] = (self.sales_data['day_of_week'] >= 5).astype(int)
         self.sales_data['day_of_month'] = self.sales_data['ds'].dt.day
-        self.sales_data['week_of_month'] = (self.sales_data['day_of_month'] / 7).apply(np.ceil).astype(int)
+        #self.sales_data['week_of_month'] = (self.sales_data['day_of_month'] / 7).apply(np.ceil).astype(int) 
+        self.sales_data['week_of_month'] = self.sales_data['ds'].apply(lambda d: int((d.day - 1) / 7) + 1) 
         self.sales_data['month'] = self.sales_data['ds'].dt.month
         self.sales_data['week_num_year'] = self.sales_data['ds'].dt.isocalendar().week
         self.sales_data['year'] = self.sales_data['ds'].dt.year
@@ -122,6 +135,8 @@ class DataProcessor:
 
     def split_data(self):
         """Splits the processed data into train and test sets based on the horizon from the config."""
+        if self.processor is None:
+            raise ValueError("Data has not been processed. Please call 'prcoess_data' before 'split_data")
         horizon = self.horizon
         train_list = []
         test_list = []
