@@ -1,11 +1,11 @@
 # Test for single series unique_id = "FOODS_1_001_CA_1"
 
-import logging
+
 from pathlib import Path
 
 import yaml
 
-from m5_forecasting.data_processor import DataProcessor
+from m5_forecasting.preprocessing.data_processor import DataProcessor
 from m5_forecasting.utils import DataChecker
 
 # Set up logging configuration

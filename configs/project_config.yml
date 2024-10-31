@@ -1,0 +1,24 @@
+# Databricks locations
+catalog_name: mlops_students
+schema_name: sjduckersjr
+
+# forecast horizon
+horizon: 28
+
+dataset:
+  # Databricks Raw table names
+  raw_sales_data: "raw_sales_eval"
+  raw_calendar_data: "raw_calendar"
+  raw_sell_price_data: "raw_sell_prices"
+
+paths:
+  # Path to local data
+  local_sales_filepath: "/Users/duckman/Projects/marvelous-databricks-course-Duck-m-a-n/data/sales_train_evaluation.csv"
+  local_calendar_filepath: "/Users/duckman/Projects/marvelous-databricks-course-Duck-m-a-n/data/calendar.csv"
+  local_sell_prices_filepath: "/Users/duckman/Projects/marvelous-databricks-course-Duck-m-a-n/data/sell_prices.csv"
+  # Databricks Raw Data path
+  raw_sales_path: "/Volumes/mlops_students/sjduckersjr/data/sales_train_evaluation.csv"
+  raw_calendar_path: "/Volumes/mlops_students/sjduckersjr/data/calendar.csv"
+  raw_sell_prices_path: "/Volumes/mlops_students/sjduckersjr/data/sell_prices.csv"
+
+
