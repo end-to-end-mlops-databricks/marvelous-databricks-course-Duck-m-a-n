@@ -1,206 +1,245 @@
-import logging
-import time
-import pandas as pd
 from pyspark.sql import functions as F
+from pyspark.sql import Window
+from pyspark.sql.types import DoubleType
+
+import pandera.pyspark as pa
 from m5_forecasting.schemas.processed_data import SalesDataSchema, CalendarSchema, SellPriceSchema, ProductInfoSchema
 
+
 class DataProcessor:
-    def __init__(self, config, sales_data, calendar, sell_prices, logger = None):
+    def __init__(self, config, sales_data, calendar, sell_price):
         """Initialize the DataProcessor with configuration details and data."""
         self.config = config
         self.sales_data = sales_data
         self.calendar = calendar
-        self.sell_prices = sell_prices
+        self.sell_price = sell_price
         self.horizon = config.horizon
-        self.logger = logger if logger else logging.getLogger(__name__)
         self.prod_info = None
         self.train_df = None
         self.test_df = None
 
     def preprocess_data(self):
-        """Processes the data to create self.sales_data, self.calendar, self.sell_prices, and self.prod_info."""
-        self.logger.info("Starting data preprocessing...")
-
-        # Step 1: Generate unique_id and melt sales data
-        self.sales_data["unique_id"] = self.sales_data["item_id"] + "_" + self.sales_data["store_id"]
-        date_columns = [col for col in self.sales_data.columns if col.startswith("d_")]
-        self.sales_data = pd.melt(
-            self.sales_data,
-            id_vars=["unique_id", "item_id", "dept_id", "cat_id", "store_id", "state_id"],
-            value_vars=date_columns,
-            var_name="ds_id",
-            value_name="y"
+        """Processes the data to create self.sales_data, self.calendar, self.sell_price, and self.prod_info."""
+        # Step 1: Generate unique_id and unpivot sales data
+        self.sales_data = (
+            self.sales_data
+            .withColumn("unique_id", F.concat_ws("_", F.col("item_id"), F.col("store_id")))
+            .selectExpr(
+                "unique_id", "item_id", "dept_id", "cat_id", "store_id", "state_id",
+                "stack({}, {}) as (ds_id, y)".format(
+                    len([col for col in self.sales_data.columns if col.startswith("d_")]),
+                    ', '.join(["'{}', {}".format(col, col) for col in self.sales_data.columns if col.startswith("d_")])
+                )
+            )
         )
 
-        # Convert data types in self.sales_data
-        self.sales_data["ds_id"] = self.sales_data["ds_id"].astype(str)
-        self.sales_data["unique_id"] = self.sales_data["unique_id"].astype(str)
-        self.sales_data["y"] = self.sales_data["y"].astype(int)
+        # Convert data types
+        self.sales_data = (
+            self.sales_data
+            .withColumn("ds_id", F.col("ds_id").cast("STRING"))
+            .withColumn("y", F.col("y").cast("INT"))
+        )
 
         # Step 2: Prepare calendar with time features and num_events
         self.calendar = self.prepare_calendar()
 
-        # Step 3: Merge self.sales_data with calendar to map ds and add num_events
-        self.sales_data = self.sales_data.merge(
-            self.calendar[["ds_id", "ds", "wm_yr_wk"]],
-            on="ds_id",
-            how="left"
+        # Step 3: Merge sales data with calendar on ds_id to map ds and add wm_yr_wk
+        self.sales_data = (
+            self.sales_data
+            .join(self.calendar.select("ds_id", "ds", "wm_yr_wk"), on="ds_id", how="left")
         )
 
-        # Step 4: Apply filter to remove rows before the product release
+        # Step 4: Create product information (prod_info) from sales data
+        self.prod_info = (
+            self.sales_data
+            .select(
+                F.col("unique_id").cast("STRING"),
+                F.col("item_id").cast("STRING"),
+                F.col("dept_id").cast("STRING"),
+                F.col("cat_id").cast("STRING"),
+                F.col("store_id").cast("STRING"),
+                F.col("state_id").cast("STRING")
+            )
+            .dropDuplicates()
+        )
+
+        # Step 5: Prepare sell_price with unique_id and expanded ds
+        self.sell_price = (
+            self.sell_price
+            .withColumn("unique_id", F.concat_ws("_", F.col("item_id"), F.col("store_id")))
+            .withColumn("unique_id", F.col("unique_id").cast("STRING"))
+            .withColumn("wm_yr_wk", F.col("wm_yr_wk").cast("INT"))
+            .join(
+                self.calendar.select("wm_yr_wk", "ds", "week_num_year", "year"),
+                on="wm_yr_wk",
+                how="left"
+            )
+            .select(
+                "unique_id", "item_id", "store_id", "ds", "sell_price", "week_num_year", "year", "wm_yr_wk"
+            )
+            .withColumn("sell_price", F.col("sell_price").cast("DOUBLE"))
+        )
+
+        # Enrich sell_price with dept_id
+        self.sell_price = (
+            self.sell_price
+            .join(self.prod_info.select("unique_id", "dept_id"), on="unique_id", how="inner")
+        )
+
+        # Compute dept_wkly_avg_sell_price
+        dept_wkly_avg_sell_price_df = (
+            self.sell_price
+            .groupBy("dept_id", "week_num_year", "year")
+            .agg(F.round(F.avg("sell_price"), 2).cast(DoubleType()).alias("dept_wkly_avg_sell_price"))
+        )
+
+        # Add dept_wkly_avg_sell_price to sell_price
+        self.sell_price = (
+            self.sell_price
+            .join(
+                dept_wkly_avg_sell_price_df,
+                on=["dept_id", "week_num_year", "year"],
+                how="left"
+            )
+            .select("unique_id", "ds", "sell_price", "dept_wkly_avg_sell_price", "item_id", "store_id", "wm_yr_wk")
+        )
+
+        # Step 6: Filter to remove rows before the product release week
         self.sales_data = self.filter_before_release()
 
-        # Step 5: Prepare self.sell_prices with unique_id and expanded ds
-        self.sell_prices["unique_id"] = self.sell_prices["item_id"] + "_" + self.sell_prices["store_id"]
-        self.sell_prices = self.sell_prices.merge(
-            self.calendar[["wm_yr_wk", "ds"]],
-            on="wm_yr_wk",
-            how="left"
-        )[["unique_id", "ds", "sell_price"]]
+        # Ensure ds is of type TIMESTAMP
+        self.sales_data = self.sales_data.withColumn("ds", F.col("ds").cast("TIMESTAMP")).select(["unique_id", "ds", "y"])
+        self.calendar = self.calendar.withColumn("ds", F.col("ds").cast("TIMESTAMP")).drop("ds_id", "wm_yr_wk")
+        self.sell_price = self.sell_price.withColumn("ds", F.col("ds").cast("TIMESTAMP")).drop("item_id", "store_id", "wm_yr_wk")
 
-        # Convert data types in self.sell_prices
-        self.sell_prices["unique_id"] = self.sell_prices["unique_id"].astype(str)
-        self.sell_prices["sell_price"] = self.sell_prices["sell_price"].astype(float)
-
-        # Step 6: Create self.prod_info
-        self.prod_info = self.sales_data[["unique_id", "item_id", "dept_id", "cat_id", "store_id", "state_id"]].drop_duplicates()
-
-        # Convert data types in self.prod_info
-        self.prod_info = self.prod_info.astype(str)
-
-        # Ensure ds is of type Date
-        self.sales_data["ds"] = pd.to_datetime(self.sales_data["ds"]).dt.date
-        self.calendar["ds"] = pd.to_datetime(self.calendar["ds"]).dt.date
-        self.sell_prices["ds"] = pd.to_datetime(self.sell_prices["ds"]).dt.date
-
-        # Store processed data
-        self.sales_data = self.sales_data[["unique_id", "ds", "y"]]
-        self.calendar = self.calendar[["ds", "day_of_week", "is_weekend", "day_of_month", "week_of_month", "month", "week_num_year", "year", "num_events", "wm_yr_wk"]]
-        self.sell_prices = self.sell_prices[["unique_id", "ds", "sell_price"]]
-        self.prod_info = self.prod_info
-
-        # Store processed data and validate with pandera schemas
+        # Validate DataFrames with Pandera
         self.sales_data = SalesDataSchema.validate(self.sales_data)
         self.calendar = CalendarSchema.validate(self.calendar)
-        self.sell_prices = SellPriceSchema.validate(self.sell_prices)
+        self.sell_price = SellPriceSchema.validate(self.sell_price)
         self.prod_info = ProductInfoSchema.validate(self.prod_info)
 
-        # Return processed DataFrames
-        return self.sales_data, self.calendar, self.sell_prices, self.prod_info
-    
+        # Store processed data
+        return self.sales_data, self.calendar, self.sell_price, self.prod_info
+
     def prepare_calendar(self):
         """Prepares the calendar data with num_events and time-based features."""
-        self.calendar["ds"] = pd.to_datetime(self.calendar["date"])
+        self.calendar = (
+            self.calendar
+            .withColumnRenamed("date", "ds")
+            .withColumn("ds", F.to_timestamp("ds"))
+            .sort("ds")
+            .withColumn("day_of_week", (F.dayofweek("ds") - 1).cast("INT"))
+            .withColumn("is_weekend", F.when(F.col("day_of_week") >= 5, 1).otherwise(0))
+            .withColumn("day_of_month", F.dayofmonth("ds").cast("INT"))
+            .withColumn("week_of_month", (F.floor((F.dayofmonth("ds") - 1) / 7) + 1).cast("INT"))
+            .withColumn("month", F.col("month").cast("INT"))
+            .withColumn("week_num_year", F.col("wm_yr_wk").cast("INT"))
+            .withColumn("year", F.col("year").cast("INT"))
+            .withColumn("wm_yr_wk", F.col("wm_yr_wk").cast("INT"))
+            .withColumn("ds_id", F.concat(F.lit("d_"), F.monotonically_increasing_id() + 1).cast("STRING"))
+            .replace("NA", None)
+            .fillna({"event_type_2": "0", "event_name_2": "0", "event_type_1": "0", "event_name_1": "0"})
+            .withColumn(
+                "num_events",
+                F.when((F.col("event_type_1") != "0") & (F.col("event_type_2") != "0"), 2)
+                .when(F.col("event_type_1") != "0", 1)
+                .otherwise(0)
+            )
+            .dropDuplicates(["ds"])
+        )
 
-        # Sort by ds before assigning ds_id
-        self.calendar = self.calendar.sort_values("ds").reset_index(drop=True)
-
-        self.calendar["day_of_week"] = self.calendar["ds"].dt.dayofweek.astype(int)
-        self.calendar["is_weekend"] = (self.calendar["day_of_week"] >= 5).astype(int)
-        self.calendar["day_of_month"] = self.calendar["ds"].dt.day.astype(int)
-        self.calendar["week_of_month"] = self.calendar["ds"].apply(lambda d: int((d.day - 1) / 7) + 1).astype(int)
-        self.calendar["month"] = self.calendar["ds"].dt.month.astype(int)
-        self.calendar["week_num_year"] = self.calendar["ds"].dt.isocalendar().week.astype(int)
-        self.calendar["year"] = self.calendar["ds"].dt.year.astype(int)
-
-        # Define event counts
-        self.calendar["event_type_2"].fillna(0, inplace=True)
-        self.calendar["event_name_2"].fillna(0, inplace=True)
-        self.calendar["event_type_1"].fillna(0, inplace=True)
-        self.calendar["event_name_1"].fillna(0, inplace=True)
-        self.calendar["num_events"] = 0
-        self.calendar.loc[self.calendar["event_type_2"] != 0, "num_events"] = 2
-        self.calendar.loc[(self.calendar["event_type_2"] == 0) & (self.calendar["event_type_1"] != 0), "num_events"] = 1
-        self.calendar["num_events"] = self.calendar["num_events"].astype(int)
-
-        # Add ds_id for merging
-        self.calendar["ds_id"] = "d_" + (self.calendar.index + 1).astype(str)
-        
-        # Drop any duplicates in ds to keep it unique for joins
-        self.calendar = self.calendar.drop_duplicates(subset="ds")
-
-        # Select relevant columns
-        return self.calendar[[
-            "ds_id", "ds", "day_of_week", "is_weekend", "day_of_month", "week_of_month", 
-            "month", "week_num_year", "year", "num_events", "wm_yr_wk"
-        ]]
+        return self.calendar.select(
+            "ds", "day_of_week", "is_weekend", "day_of_month", "week_of_month",
+            "month", "week_num_year", "year", "num_events", "wm_yr_wk", "ds_id"
+        )
 
     def filter_before_release(self):
         """Filters out rows in self.sales_data where the data is before the release week."""
-        # Get the minimum week (`wm_yr_wk`) for each product (identified by `store_id` and `item_id`) as the release week
-        release_df = self.sell_prices.groupby(["store_id", "item_id"])["wm_yr_wk"].min().reset_index()
-        release_df["unique_id"] = release_df["item_id"] + "_" + release_df["store_id"]
-        release_df = release_df[["unique_id", "wm_yr_wk"]].rename(columns={"wm_yr_wk": "release"})
+        # Get minimum wm_yr_wk per unique_id
+        release_df = (
+            self.sell_price
+            .groupBy("unique_id")
+            .agg(F.min("wm_yr_wk").alias("release"))
+            .select("unique_id", "release")
+        )
 
-        # Merge release week information onto self.sales_data and filter out data before the product's release week
-        self.sales_data = self.sales_data.merge(release_df, on="unique_id", how="left")
-        return self.sales_data[self.sales_data["wm_yr_wk"] >= self.sales_data["release"]].reset_index(drop=True)
+        # Join to filter out records in sales_data before the release week
+        return (
+            self.sales_data
+            .join(release_df, on="unique_id", how="left")
+            .filter(F.col("wm_yr_wk") >= F.col("release"))
+            .drop("release")
+        )
 
     def split_data(self):
         """Splits the self.sales_data into train and test sets based on the horizon."""
-        self.logger.info("Splitting data into train and test sets...")
         horizon = self.horizon
-        train_list = []
-        test_list = []
 
-        for _, group in self.sales_data.groupby("unique_id"):
-            if len(group) > horizon:
-                train_list.append(group.iloc[:-horizon])
-                test_list.append(group.iloc[-horizon:])
-            else:
-                train_list.append(group)
+        # Define a window partitioned by unique_id and ordered by ds
+        window_spec = Window.partitionBy("unique_id").orderBy("ds")
 
-        self.train_df = pd.concat(train_list).reset_index(drop=True)
-        self.test_df = pd.concat(test_list).reset_index(drop=True)
-        self.logger.info(f"Train set shape: {self.train_df.shape}, Test set shape: {self.test_df.shape}")
+        # Add a row number within each unique_id
+        self.sales_data = self.sales_data.withColumn("row_number", F.row_number().over(window_spec))
+
+        # Get the maximum row number per unique_id
+        max_row_df = (
+            self.sales_data.groupBy("unique_id")
+            .agg(F.max("row_number").alias("max_row_number"))
+        )
+
+        # Calculate the split point
+        split_df = max_row_df.withColumn("split_row_number", F.col("max_row_number") - horizon)
+
+        # Join back to sales_data to get the split_row_number per unique_id
+        self.sales_data = self.sales_data.join(split_df.select("unique_id", "split_row_number"), on="unique_id", how="left")
+
+        # Create train and test flags
+        self.sales_data = self.sales_data.withColumn(
+            "dataset",
+            F.when(F.col("row_number") <= F.col("split_row_number"), "train")
+            .otherwise("test")
+        )
+
+        # Split into train and test DataFrames
+        self.train_df = self.sales_data.filter(F.col("dataset") == "train").drop("row_number", "max_row_number", "split_row_number", "dataset")
+        self.test_df = self.sales_data.filter(F.col("dataset") == "test").drop("row_number", "max_row_number", "split_row_number", "dataset")
 
         return self.train_df, self.test_df
 
-    def save_to_catalog(self, spark, catalog_name, schema_name, train, test, calendar, sell_prices, prod_info):
-        """Saves the processed DataFrames to Delta tables in chunks with UTC timestamp and change data feed."""
-        self.logger.info("Starting to save DataFrames to Delta tables...")
+    def save_to_catalog(self, spark, catalog_name, schema_name, train, test, calendar, sell_price, prod_info):
+        """
+        Saves the processed DataFrames to Delta tables with UTC timestamp and change data feed enabled.
 
-        # Timestamp column
+        Parameters:
+        - spark: SparkSession object.
+        - catalog_name: Name of the catalog.
+        - schema_name: Name of the schema (database).
+        - train: Training DataFrame.
+        - test: Testing DataFrame.
+        - calendar: Calendar DataFrame.
+        - sell_price: Sell Price DataFrame.
+        - prod_info: Product Info DataFrame.
+        """
+        # Get the current UTC timestamp
         timestamp = F.to_utc_timestamp(F.current_timestamp(), "UTC")
 
-        # Define and write each table with timestamp and change data feed
-        tables = {
-            "calendar": calendar,
-            "prod_info": prod_info,
-            "test_set": test,
-            "train_set": train,
-            "sell_prices": sell_prices,
-        }
+        # List of DataFrames and their corresponding table names
+        tables = [
+            (train, 'train_set'),
+            (test, 'test_set'),
+            (calendar, 'calendar'),
+            (sell_price, 'sell_price'),
+            (prod_info, 'prod_info'),
+        ]
 
-        chunk_size = 500_000  # Define the chunk size
+        # Loop through each DataFrame and save to Delta table with CDF enabled
+        for df, table_name in tables:
+            # Add 'update_timestamp_utc' column
+            df_with_timestamp = df.withColumn("update_timestamp_utc", timestamp)
 
-        for table_name, df in tables.items():
-            self.logger.info(f"Starting processing for {table_name} DataFrame...")
-
-            total_rows = len(df)
-            num_chunks = (total_rows // chunk_size) + (1 if total_rows % chunk_size != 0 else 0)
-            
-            for i in range(num_chunks):
-                chunk_start = i * chunk_size
-                chunk_end = min((i + 1) * chunk_size, total_rows)
-                chunk = df.iloc[chunk_start:chunk_end]
-                
-                self.logger.info(f"Processing chunk {i + 1}/{num_chunks} for {table_name}, rows {chunk_start}-{chunk_end}")
-
-                # Convert chunk to Spark DataFrame and add timestamp
-                start_time = time.time()
-                spark_df = spark.createDataFrame(chunk).withColumn("update_timestamp_utc", timestamp)
-                self.logger.info(f"Converted chunk {i + 1} to Spark DataFrame in {time.time() - start_time:.2f} seconds")
-
-                # Append chunk to Delta table
-                start_time = time.time()
-                spark_df.write.mode("append").saveAsTable(f"{catalog_name}.{schema_name}.{table_name}")
-                self.logger.info(f"Appended chunk {i + 1} to {table_name} in {time.time() - start_time:.2f} seconds")
-
-            # Enable change data feed after all chunks are uploaded
-            spark.sql(f"ALTER TABLE {catalog_name}.{schema_name}.{table_name} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
-            self.logger.info(f"Enabled change data feed for {table_name}")
-
-        self.logger.info("All DataFrames saved to Delta tables with change data feed enabled.")
-
-
+            # Save the DataFrame as a Delta table with CDF enabled
+            df_with_timestamp.write.mode("overwrite") \
+                .format("delta") \
+                .option("overwriteSchema", "true") \
+                .option("delta.enableChangeDataFeed", "true") \
+                .saveAsTable(f"{catalog_name}.{schema_name}.{table_name}")

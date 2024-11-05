@@ -15,15 +15,15 @@ dependencies = [
                 "matplotlib==3.9.2",
                 "numpy==1.26.4",
                 "pandas==1.5.3",
-                "pandera==0.20.4",
+                "pandera[pyspark]==0.20.4",
                 "psutil==6.1.0",
                 "plotly==5.24.1",
                 "pyarrow==14.0.1",
                 "statsforecast[plotly]==1.7.8",
-                "mlforecast==0.13.5",
+                "mlforecast[spark]==0.13.5",
                 "coreforecast==0.0.13.1",
                 "utilsforecast==0.2.7",    
-                "lightgbm>=4.5.0",
+                "lightgbm==4.5.0",
                 "scipy==1.14.1",
                 "scikit-learn==1.5.2"
                 ]
@@ -50,3 +50,14 @@ lint.ignore = [
 
 [tool.ruff.format]
 indent-style = "space"
+
+[tool.setuptools]
+packages = ["m5_forecasting"]
+
+[tool.setuptools.package-data]
+m5_forecasting = ["**/*.py"]
+
+[build-system]
+requires = [
+  "setuptools>=72.0"]
+build-backend = "setuptools.build_meta" 

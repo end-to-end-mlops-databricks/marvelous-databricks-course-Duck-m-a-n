@@ -2,11 +2,6 @@ from pydantic import BaseModel
 from typing import List, Dict, Any
 import yaml
 
-class DatasetConfig(BaseModel):
-    raw_sales_data: str
-    raw_calendar_data: str
-    raw_sell_price_data: str
-
 class PathsConfig(BaseModel):
     # Databricks paths
     raw_sales_path: str
@@ -18,11 +13,16 @@ class PathsConfig(BaseModel):
     local_calendar_filepath: str
     local_sell_prices_filepath: str
 
+class ProcessedFeatures(BaseModel):
+    num_features: List[str]
+    cat_features: List[str]
+
 class Config(BaseModel):
     catalog_name: str
     schema_name: str
     horizon: int
-    dataset: DatasetConfig
+    target: str
+    processed_features: ProcessedFeatures
     paths: PathsConfig
 
     @classmethod
