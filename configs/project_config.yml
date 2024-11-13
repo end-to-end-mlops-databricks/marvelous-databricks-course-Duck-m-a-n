@@ -7,31 +7,84 @@ horizon: 28
 
 target: "y"
 
+parameters:
+  init:
+    hyperparameters:
+      boostingType: 'gbdt'
+      objective: 'tweedie'
+      metric: 'tweedie'
+      tweedieVariancePower: 1.1
+      baggingFraction: 0.75
+      baggingFreq: 1
+      learningRate: 0.075
+      numLeaves: 128
+      minDataInLeaf: 100
+      featureFraction: 0.5
+      maxBin: 255
+      numIterations: 1200
+      boostFromAverage: False
+      verbosity: -1
+    freq: "D"
+    lags: [1, 7]
+    lag_transforms:
+      1:
+        - type: "ExpandingMean"
+          params: {}
+      7:
+        - type: "ExpandingMean"
+          params: {}
+        - type: "RollingMean"
+          params:
+            window_size: 7
+        - type: "RollingMean"
+          params:
+            window_size: 14
+    num_threads: 1
+
+
 processed_features:
   num_features:
     - sell_price
-    - num_events
-    - is_weekend
+    - dept_wkly_avg_sell_price
     - day_of_week
+    - is_weekend
     - day_of_month
-    - week_num_year
     - week_of_month
-    - day_of_month
+    - month
+    - week_num_year
     - year
-
+    - num_events
+  
   cat_features:
-    - item_id
-    - dept_id
-    - cat_id
-    - store_id
     - state_id
+    - store_id
+    - cat_id
+    - dept_id
+    - item_id
+    - conditions
+
+  date_features:
+    - release_date
+
+  engineered_features:
+    - lag1
+    - lag7
+    - expanding_mean_lag1
+    - expanding_mean_lag7
+    - rolling_mean_lag7_window_size7
+    - rolling_mean_lag7_window_size14
+
+  static_features:
+    - update_timestamp_utc
 
 paths:
   # Path to local data
   local_sales_filepath: "data/sales_train_evaluation.csv"
   local_calendar_filepath: "data/calendar.csv"
   local_sell_prices_filepath: "data/sell_prices.csv"
+  local_weather_filepath: "data/weather.csv"
   # Databricks Raw Data path
   raw_sales_path: "/Volumes/mlops_students/sjduckersjr/data/sales_train_evaluation.csv"
   raw_calendar_path: "/Volumes/mlops_students/sjduckersjr/data/calendar.csv"
   raw_sell_prices_path: "/Volumes/mlops_students/sjduckersjr/data/sell_prices.csv"
+  raw_weather_path: "/Volumes/mlops_students/sjduckersjr/data/weather.csv"

@@ -1,45 +1,42 @@
-import pandera.pyspark as pa
-import pyspark.sql.types as T
-from pandera.pyspark import DataFrameModel
+from pandera import DataFrameModel, Field, Check
+from pandera.typing import Series
+from pandera.dtypes import Category, Float32, Int8, Int16, Int32, DateTime, Float64
+import pandas as pd
 
-class SalesDataSchema(DataFrameModel):
-    unique_id: T.StringType() = pa.Field()
-    ds: T.TimestampType() = pa.Field()
-    y: T.IntegerType() = pa.Field(ge=0)  # Ensures non-negative sales values
-
-    class Config:
-        coerce = True  # Coerce columns to defined dtypes
-
-class CalendarSchema(DataFrameModel):
-    ds: T.TimestampType() = pa.Field()
-    day_of_week: T.IntegerType() = pa.Field()
-    is_weekend: T.IntegerType() = pa.Field()
-    day_of_month: T.IntegerType() = pa.Field()
-    week_of_month: T.IntegerType() = pa.Field()
-    month: T.IntegerType() = pa.Field()
-    week_num_year: T.IntegerType() = pa.Field()
-    year: T.IntegerType() = pa.Field()
-    num_events: T.IntegerType() = pa.Field()
-
-    class Config:
-        coerce = True
-
-class SellPriceSchema(DataFrameModel):
-    unique_id: T.StringType() = pa.Field()
-    ds: T.TimestampType() = pa.Field()
-    sell_price: T.DoubleType() = pa.Field(ge=0)
-    dept_wkly_avg_sell_price: T.DoubleType() = pa.Field(ge=0)
-
-    class Config:
-        coerce = True
-
-class ProductInfoSchema(DataFrameModel):
-    unique_id: T.StringType() = pa.Field()
-    item_id: T.StringType() = pa.Field()
-    dept_id: T.StringType() = pa.Field()
-    cat_id: T.StringType() = pa.Field()
-    store_id: T.StringType() = pa.Field()
-    state_id: T.StringType() = pa.Field()
+class CombinedDataFrameSchema(DataFrameModel):
+    """Schema for the combined DataFrame."""
+    
+    unique_id: Series[Category] = Field(nullable=False)
+    ds: Series[DateTime] = Field(nullable=False)
+    y: Series[Int32] = Field(ge=0, nullable=False)
+    sell_price: Series[Float32] = Field(ge=0, nullable=True)
+    temp: Series[Float32] = Field(nullable=True)
+    conditions: Series[Category] = Field(nullable=True)
+    num_events: Series[Int8] = Field(in_range={"min_value": 0, "max_value": 2}, nullable=False)
+    item_id: Series[Category] = Field(nullable=False)
+    dept_id: Series[Category] = Field(nullable=False)
+    cat_id: Series[Category] = Field(nullable=False)
+    store_id: Series[Category] = Field(nullable=False)
+    state_id: Series[Category] = Field(nullable=False)
+    day_of_week: Series[Int8] = Field(in_range={"min_value": 0, "max_value": 6}, nullable=False)
+    is_weekend: Series[Int8] = Field(isin=[0, 1], nullable=False)
+    day_of_month: Series[Int8] = Field(in_range={"min_value": 1, "max_value": 31}, nullable=False)
+    week_of_month: Series[Int8] = Field(in_range={"min_value": 1, "max_value": 5}, nullable=False)
+    month: Series[Int8] = Field(in_range={"min_value": 1, "max_value": 12}, nullable=False)
+    year: Series[Int16] = Field(ge=1900, nullable=False)
+    avg_weekly_temp: Series[Float32] = Field(nullable=True)
+    avg_monthly_temp: Series[Float32] = Field(nullable=True)
+    avg_28_day_temp: Series[Float32] = Field(nullable=True)
+    percent_diff_weekly_temp: Series[Float32] = Field(nullable=True)
+    percent_diff_monthly_temp: Series[Float32] = Field(nullable=True)
+    percent_diff_28_day_avg_temp: Series[Float32] = Field(nullable=True)
+    monthly_avg_sell_price: Series[Float32] = Field(nullable=True)
+    percent_diff_monthly_sell_price: Series[Float32] = Field(nullable=True)
+    dept_avg_sell_price: Series[Float32] = Field(nullable=True)
+    cat_avg_sell_price: Series[Float32] = Field(nullable=True)
+    store_dept_avg_sell_price: Series[Float32] = Field(nullable=True)
+    state_dept_avg_sell_price: Series[Float32] = Field(nullable=True)
 
     class Config:
         coerce = True
+

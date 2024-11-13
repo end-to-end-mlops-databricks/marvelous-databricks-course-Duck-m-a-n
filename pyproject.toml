@@ -25,7 +25,9 @@ dependencies = [
                 "utilsforecast==0.2.7",    
                 "lightgbm==4.5.0",
                 "scipy==1.14.1",
-                "scikit-learn==1.5.2"
+                "scikit-learn==1.5.2",
+                "synapse==2.187.0",
+                "synapseml==1.0.8"
                 ]
 
 [project.optional-dependencies]

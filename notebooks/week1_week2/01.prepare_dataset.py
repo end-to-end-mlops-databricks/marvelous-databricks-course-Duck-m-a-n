@@ -8,8 +8,8 @@ dbutils.library.restartPython()
 from m5_forecasting.preprocessing.data_processor import DataProcessor
 from m5_forecasting.config import Config
 
+import pandas as pd
 from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
 
 # COMMAND ----------
 spark = SparkSession.builder.getOrCreate()
@@ -20,38 +20,22 @@ schema_name = config.schema_name
 volumes_sales_csv = config.paths.raw_sales_path
 volumes_calendar_csv = config.paths.raw_calendar_path
 volumes_sell_price_csv = config.paths.raw_sell_prices_path
+volumes_weather_csv = config.paths.raw_weather_path
 
 # COMMAND ----------
-sales_df = spark.read.option("header", "true").option("inferSchema", "true").csv(volumes_sales_csv)
-calendar_df = spark.read.option("header", "true").option("inferSchema", "true").csv(volumes_calendar_csv)
-sell_price_df = spark.read.option("header", "true").option("inferSchema", "true").csv(volumes_sell_price_csv)
+sales  = pd.read_csv(volumes_sales_csv)
+calendar = pd.read_csv(volumes_calendar_csv)
+sell_price = pd.read_csv(volumes_sell_price_csv)
+weather = pd.read_csv(volumes_weather_csv)
 
 # COMMAND ----------
-data_processor = DataProcessor(config, sales_df, calendar_df, sell_price_df)
+processor = DataProcessor(config = config, sales_data=sales, calendar=calendar, sell_price=sell_price, weather=weather)
 
 # COMMAND ----------
-processed_sales, processed_calendar, processed_sell_price, processed_prod_info = data_processor.preprocess_data()
-
-# COMMAND ---------
-assert not processed_sales.pandera.errors, f"sales_df validation errors: {processed_sales.pandera.errors}"
-assert not processed_calendar.pandera.errors, f"calendar_df validation errors: {processed_calendar.pandera.errors}"
-assert not processed_sell_price.pandera.errors, f"sell_price_df validation errors: {processed_sell_price.pandera.errors}"
-assert not processed_prod_info.pandera.errors, f"prod_info_df validation errors: {processed_prod_info.pandera.errors}"
+combined_df = processor.preprocess_data()
 
 # COMMAND ----------
-train_set, test_set = data_processor.split_data()
+train_set, test_set = processor.split_data()
 
 # COMMAND ----------
-# Save to catalog and confirm completion
-
-data_processor.save_to_catalog(
-    spark=spark,
-    catalog_name=config.catalog_name,
-    schema_name=config.schema_name,
-    train=train_set,
-    test=test_set,
-    calendar=processed_calendar,
-    sell_price=processed_sell_price,
-    prod_info=processed_prod_info
-)
-
+processor.save_to_catalog(spark, train_set, test_set, catalog_name, schema_name)
