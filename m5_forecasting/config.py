@@ -13,30 +13,21 @@ class PathsConfig(BaseModel):
     local_sales_filepath: str
     local_calendar_filepath: str
     local_sell_prices_filepath: str
+    local_weather_filepath: str
 
-class ProcessedFeatures(BaseModel):
-    num_features: List[str]
-    cat_features: List[str]
-    static_features: List[str]
-    date_features: List[str]
-    engineered_features: List[str]
-
-class InitParams(BaseModel):
+class ParametersConfig(BaseModel):
     hyperparameters: Dict[str, Any]
     freq: str
     lags: List[int]
     lag_transforms: Dict[int, List[Dict[str, Any]]]
     num_threads: int
 
-class ParametersConfig(BaseModel):
-    init: InitParams
-
 class Config(BaseModel):
     catalog_name: str
     schema_name: str
     horizon: int
     target: str
-    processed_features: ProcessedFeatures
+    cat_features: List[str]
     paths: PathsConfig
     parameters: ParametersConfig
 
