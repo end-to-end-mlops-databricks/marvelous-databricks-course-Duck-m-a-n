@@ -1,6 +1,8 @@
 <h1 align="center">
-m5 forecasting
+m5 forecasting:  Parallelizing Group-Specific Forecasts using LightGBM
 
+
+For Spark training:
 - need to make sure "com.microsoft.azure:synapseml-lightgbm_2.12:1.0.8" is installed on the cluster to perform distributed training
     - https://github.com/microsoft/SynapseML?tab=readme-ov-file#setup-and-installation
 

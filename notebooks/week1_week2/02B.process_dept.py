@@ -36,6 +36,23 @@ def main():
     config = Config.from_yaml("../../configs/project_config.yml")
     print("Configuration loaded.")
 
+    # Get dept_store_id and job_run_date from command-line arguments
+    if len(sys.argv) < 3:
+        raise ValueError("dept_store_id and job_run_date parameters are missing")
+    dept_store_id = sys.argv[1]
+    job_run_date = sys.argv[2]
+    exp_id = dbutils.jobs.taskValues.get(taskKey="GetDeptStoreIDs", key="exp_id")
+
+    print(sys.argv)
+    print(f"Job run date: {job_run_date}")
+    print(f"Dept-Store ID: {dept_store_id}")
+    print(f"Experiment ID: {exp_id}")
+
+    # Split dept_store_id into dept_id and store_id
+    dept_id, store_id = dept_store_id.split('-')
+
+    print(f"Processing department: {dept_id}, store: {store_id}")
+
     # Access configurations
     catalog_name = config.catalog_name
     schema_name = config.schema_name
@@ -67,33 +84,30 @@ def main():
         lag_transforms[lag] = transform_list
     print("Lag transforms defined.")
 
-    # Get dept_id from command-line arguments
-    if len(sys.argv) < 2:
-        raise ValueError("dept_id parameter is missing")
-    dept_id = sys.argv[1]
-
     print(f"Processing department: {dept_id}")
 
     predefined_unique_ids = [
-        "HOBBIES_1_001_CA_1",  # full historical data
+        "HOBBIES_1_001_CA_1",
         "HOBBIES_1_023_CA_1",
-        "FOODS_3_595_CA_1",    # represents shortest time series 100 timestamps
+        "FOODS_3_595_CA_1",
         "FOODS_3_238_CA_1",
-        "FOODS_3_246_CA_1",    # full varying history not very much highs looks to represent the majority
-        "HOUSEHOLD_1_146_CA_1",  # full history
-        "HOUSEHOLD_1_178_CA_1",  # full history same store same state
-        "HOUSEHOLD_1_056_CA_1",  # varying history same store same state
-        "HOUSEHOLD_1_179_CA_2",  # full history high values, different store same state
+        "FOODS_3_246_CA_1",
+        "HOUSEHOLD_1_146_CA_1",
+        "HOUSEHOLD_1_178_CA_1",
+        "HOUSEHOLD_1_056_CA_1",
+        "HOUSEHOLD_1_179_CA_2",
     ]
 
-    # Filter training and testing data for the current dept_id
+    # Filter training and testing data for the current dept_id and store_id
     print("Filtering training and testing data...")
     train_set = spark.table(f"{catalog_name}.{schema_name}.train_set") \
         .filter(F.col("dept_id") == dept_id) \
+        .filter(F.col("store_id") == store_id) \
         .filter(F.col("unique_id").isin(predefined_unique_ids))
 
     test_set = spark.table(f"{catalog_name}.{schema_name}.test_set") \
         .filter(F.col("dept_id") == dept_id) \
+        .filter(F.col("store_id") == store_id) \
         .filter(F.col("unique_id").isin(predefined_unique_ids))
 
     train_count = train_set.count()
@@ -109,7 +123,7 @@ def main():
 
     # Check if data is available
     if train_df.empty:
-        print(f"No data for department {dept_id}")
+        print(f"No data for department {dept_id}, store {store_id}")
         return
 
     # Prepare training and testing data
@@ -156,12 +170,13 @@ def main():
 
     # Set up MLflow experiment and start a run
     print("Starting MLflow run...")
-    mlflow.set_experiment("/Shared/m5_forecasting_experiment")
+    #mlflow.set_experiment("/Shared/m5_forecasting_experiment")
     git_sha = "5d53908cc7b4f89b30dfbd5c3355c72076b8d2fb"  # Update with latest git commit hash
 
     with mlflow.start_run(
-        run_name=f"Forecast_dept_{dept_id}",
-        tags={"git_sha": f"{git_sha}", "branch": "week2", "dept_id": dept_id}
+        experiment_id=exp_id,
+        run_name=f"{dept_store_id}_Forecast_For_{job_run_date}",
+        tags={"git_sha": f"{git_sha}", "branch": "week2", "dept_store_id": dept_store_id}
     ) as run:
         run_id = run.info.run_id
         print(f"MLflow run started with run_id: {run_id}")
@@ -205,6 +220,7 @@ def main():
         mlflow.log_param("model_type", "LightGBM with preprocessing")
         mlflow.log_params(params.hyperparameters)
         mlflow.log_param("dept_id", dept_id)
+        mlflow.log_param("store_id", store_id)
         for _, row in evaluation.iterrows():
             metric = row['metric']
             value = row['LGBMRegressor']
@@ -226,7 +242,7 @@ def main():
         print("Logging the model to MLflow...")
         mlforecast.flavor.log_model(
             model=fcst,
-            artifact_path=f"lightgbm-pipeline-model-dept-{dept_id}",
+            artifact_path=f"lightgbm-pipeline-model-dept-{dept_store_id}_{job_run_date}",
             code_paths=["m5_forecasting-0.0.1-py3-none-any.whl"],
             signature=signature
         )
@@ -235,19 +251,29 @@ def main():
         # Generate and log the plot as an interactive HTML
         print("Generating and logging the forecast plot...")
         fig = plot_series(forecasts_df=df_eval, engine="plotly")
-        fig_html = f"forecast_plot_{dept_id}.html"
+        fig.update_layout(title=f"Forecast for Dept: {dept_id}, Store: {store_id}")
+        fig_html = f"forecast_plot_{dept_store_id}.html"
         fig.write_html(fig_html)
         mlflow.log_artifact(fig_html, artifact_path="plots")
         print("Forecast plot logged to MLflow.")
 
-        # Save predictions to an intermediate table
+        # Save predictions to an intermediate table using INSERT INTO
         print("Saving predictions to intermediate_predictions table...")
         y_pred['dept_id'] = dept_id
+        y_pred['store_id'] = store_id
         preds_spark = spark.createDataFrame(y_pred)
-        preds_spark.write.mode("append").saveAsTable(f"{catalog_name}.{schema_name}.intermediate_predictions")
+
+        # Register the DataFrame as a temporary view
+        preds_spark.createOrReplaceTempView("temp_preds")
+
+        # Use SQL to INSERT INTO the table
+        spark.sql(f"""
+            INSERT INTO {catalog_name}.{schema_name}.intermediate_predictions
+            SELECT * FROM temp_preds
+        """)
         print("Predictions saved.")
 
-    print(f"Completed processing for department: {dept_id}")
+    print(f"Completed processing for department: {dept_id}, store: {store_id}")
 
 if __name__ == "__main__":
     main()
