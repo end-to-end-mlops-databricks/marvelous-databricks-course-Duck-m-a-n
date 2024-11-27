@@ -3,6 +3,17 @@ schema_name: sjduckersjr
 horizon: 28
 target: "y"
 
+predefined_unique_ids:
+  - "HOBBIES_1_001_CA_1" # full historical data
+  - "HOBBIES_1_023_CA_1"
+  - "FOODS_3_595_CA_1" # represents shortest time series 100 timestamps
+  - "FOODS_3_238_CA_1"
+  - "FOODS_3_246_CA_1" # full varying history not very much highs looks to represent the majority
+  - "HOUSEHOLD_1_146_CA_1" # full history
+  - "HOUSEHOLD_1_178_CA_1" # full history same store same state
+  - "HOUSEHOLD_1_056_CA_1" # varying history same store same state
+  - "HOUSEHOLD_1_179_CA_2" # full history high values, different store same state
+
 cat_features:
   - state_id
   - store_id
@@ -10,22 +21,22 @@ cat_features:
   - dept_id
   - item_id
   - conditions
-  
+
 parameters:
   hyperparameters:
-    boostingType: 'gbdt'
+    boosting: 'gbdt'
     objective: 'tweedie'
     metric: 'tweedie'
-    tweedieVariancePower: 1.1
-    baggingFraction: 0.75
-    baggingFreq: 1
-    learningRate: 0.075
-    numLeaves: 128
-    minDataInLeaf: 100
-    featureFraction: 0.5
-    maxBin: 255
-    numIterations: 1200
-    boostFromAverage: False
+    tweedie_variance_power: 1.1
+    bagging_fraction: 0.50
+    bagging_freq: 1
+    learning_rate: 0.05       
+    num_leaves: 31             
+    min_data_in_leaf: 20
+    feature_fraction: 0.5
+    max_bin: 255                
+    num_iterations: 100        
+    boost_from_average: False   
     verbosity: -1
   freq: "D"
   lags: [1, 7]
@@ -52,6 +63,7 @@ paths:
   local_weather_filepath: "data/weather.csv"
   # Databricks Raw Data path
   raw_sales_path: "/Volumes/mlops_students/sjduckersjr/data/sales_train_evaluation.csv"
+  raw_sales_future_path: "/Volumes/mlops_students/sjduckersjr/data/sales_test_evaluation.csv"
   raw_calendar_path: "/Volumes/mlops_students/sjduckersjr/data/calendar.csv"
   raw_sell_prices_path: "/Volumes/mlops_students/sjduckersjr/data/sell_prices.csv"
   raw_weather_path: "/Volumes/mlops_students/sjduckersjr/data/weather.csv"

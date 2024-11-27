@@ -17,6 +17,8 @@ class DataProcessor:
         self.horizon = config.horizon
         self.train_df = None
         self.test_df = None
+        self.train_df_future = None
+        self.test_df_future = None
 
     def preprocess_data(self):
         """Processes the data and returns the combined DataFrame."""
@@ -272,58 +274,141 @@ class DataProcessor:
             self.combined_df[col] = self.combined_df[col].astype(dtype)
 
     def split_data(self):
-        """Splits the self.sales_data into train and test sets based on the horizon."""
-        horizon = self.horizon
+        """
+        Splits the combined data into current train and test sets based on the horizon.
 
-        self.combined_df = self.combined_df.sort_values(by=['unique_id', 'ds'])
+        Returns:
+            train_df (pd.DataFrame): Current training set.
+            test_df (pd.DataFrame): Current test set.
+        """
+        horizon = self.horizon  # e.g., 28 days
 
-        self.combined_df['row_number'] = self.combined_df.groupby('unique_id').cumcount() + 1
+        # Ensure 'ds' is in datetime format
+        self.combined_df['ds'] = pd.to_datetime(self.combined_df['ds'])
 
-        max_row_df = self.combined_df.groupby('unique_id')['row_number'].max().reset_index()
-        max_row_df.rename(columns={'row_number': 'max_row_number'}, inplace=True)
+        # Sort combined_df by 'unique_id' and 'ds'
+        self.combined_df = self.combined_df.sort_values(by=['unique_id', 'ds']).reset_index(drop=True)
 
-        max_row_df['split_row_number'] = max_row_df['max_row_number'] - horizon
+        # Find the maximum date per unique_id
+        max_ds_df = self.combined_df.groupby('unique_id')['ds'].max().reset_index()
+        max_ds_df.rename(columns={'ds': 'max_ds'}, inplace=True)
 
-        self.combined_df = self.combined_df.merge(
-            max_row_df[['unique_id', 'split_row_number']],
-            on='unique_id',
-            how='left'
-        )
+        # Merge max_ds back to combined_df
+        self.combined_df = self.combined_df.merge(max_ds_df, on='unique_id', how='left')
 
+        # Define split date for current train and test sets
+        self.combined_df['split_date'] = self.combined_df['max_ds'] - pd.Timedelta(days=horizon)
+
+        # Assign current train and test sets based on split_date
         self.combined_df['dataset'] = np.where(
-            self.combined_df['row_number'] <= self.combined_df['split_row_number'],
+            self.combined_df['ds'] <= self.combined_df['split_date'],
             'train',
             'test'
         )
 
+        # Create train and test DataFrames
         self.train_df = self.combined_df[self.combined_df['dataset'] == 'train'].drop(
-            columns=['row_number', 'split_row_number', 'dataset']
+            columns=['dataset', 'max_ds', 'split_date']
         ).reset_index(drop=True)
 
         self.test_df = self.combined_df[self.combined_df['dataset'] == 'test'].drop(
-            columns=['row_number', 'split_row_number', 'dataset']
+            columns=['dataset', 'max_ds', 'split_date']
         ).reset_index(drop=True)
 
+        # Clean up temporary columns from combined_df
+        self.combined_df.drop(columns=['max_ds', 'split_date', 'dataset'], inplace=True)
+
         return self.train_df, self.test_df
-    def save_to_catalog(self, spark, train_set, test_set, catalog_name, schema_name):
+    
+    def prepare_future_data(self):
         """
-        Saves the train and test DataFrames to Delta tables with UTC timestamp and change data feed enabled.
+        Prepares future data for modeling.
+
+        Returns:
+            future_df (pd.DataFrame): The combined future data.
+            update_7_day_future (pd.DataFrame): First 7 days of future data per unique_id.
+            predict_7_day_future (pd.DataFrame): Next 7 days after update_7_day_future per unique_id.
         """
+        # Ensure 'ds' is in datetime format
+        self.combined_df['ds'] = pd.to_datetime(self.combined_df['ds'])
+        
+        # Sort combined_df by 'unique_id' and 'ds'
+        self.combined_df = self.combined_df.sort_values(by=['unique_id', 'ds']).reset_index(drop=True)
+        
+        # Find the minimum date per unique_id
+        min_ds_df = self.combined_df.groupby('unique_id')['ds'].min().reset_index()
+        min_ds_df.rename(columns={'ds': 'min_ds'}, inplace=True)
+        
+        # Merge min_ds back to combined_df
+        self.combined_df = self.combined_df.merge(min_ds_df, on='unique_id', how='left')
+        
+        # Define date ranges for update and predict datasets
+        self.combined_df['update_end_date'] = self.combined_df['min_ds'] + pd.Timedelta(days=6)
+        self.combined_df['predict_end_date'] = self.combined_df['update_end_date'] + pd.Timedelta(days=7)
+        
+        # Assign datasets based on dates
+        self.combined_df['dataset'] = np.where(
+            self.combined_df['ds'] <= self.combined_df['update_end_date'],
+            'update',
+            np.where(
+                (self.combined_df['ds'] > self.combined_df['update_end_date']) & (self.combined_df['ds'] <= self.combined_df['predict_end_date']),
+                'predict',
+                'none'
+            )
+        )
+        
+        # Extract the datasets
+        update_7_day_future = self.combined_df[self.combined_df['dataset'] == 'update'].drop(
+            columns=['dataset', 'min_ds', 'update_end_date', 'predict_end_date']
+        ).reset_index(drop=True)
+        
+        predict_7_day_future = self.combined_df[self.combined_df['dataset'] == 'predict'].drop(
+            columns=['dataset', 'min_ds', 'update_end_date', 'predict_end_date']
+        ).reset_index(drop=True)
+        
+        # future_df is the combined future data without the temporary columns
+        future_df = self.combined_df.drop(columns=['dataset', 'min_ds', 'update_end_date', 'predict_end_date']).reset_index(drop=True)
+        
+        return future_df, update_7_day_future, predict_7_day_future
 
-        timestamp = F.to_utc_timestamp(F.current_timestamp(), "UTC")
+    
+    def save_to_catalog(self, spark, datasets, catalog_name, schema_name):
+        """
+        Saves the datasets to Delta tables with UTC timestamp and change data feed enabled.
 
-        tables = [
-            (train_set, 'train_set'),
-            (test_set, 'test_set')
-        ]
+        Parameters:
+        - datasets: list of tuples (pandas_df, table_name)
+        """
+        # Find the max date for the test_set table
+        test_set_max_ds = None
 
-        for pandas_df, table_name in tables:
+        for pandas_df, table_name in datasets:
+            # Ensure 'ds' column is in datetime format
+            pandas_df['ds'] = pd.to_datetime(pandas_df['ds'])
+
+            if table_name == 'test_set':
+                test_set_max_ds = pandas_df['ds'].max()
+
+        # Save datasets with correct max_ds values
+        for pandas_df, table_name in datasets:
+            if table_name == 'feature_set':
+                max_ds = pandas_df['ds'].min() - pd.Timedelta(days=1)
+            elif table_name in ['train_set', 'test_set']:
+                max_ds = test_set_max_ds
+            else:
+                max_ds = pandas_df['ds'].max()
+
+            # Convert pandas DataFrame to Spark DataFrame
             df = spark.createDataFrame(pandas_df)
 
-            df_with_timestamp = df.withColumn("update_timestamp_utc", timestamp)
+            # Set 'update_timestamp_utc' to max 'ds' value
+            df_with_timestamp = df.withColumn('update_timestamp_utc', F.lit(max_ds))
 
+            # Write to Delta table
             df_with_timestamp.write.mode("overwrite") \
                 .format("delta") \
                 .option("overwriteSchema", "true") \
                 .option("delta.enableChangeDataFeed", "true") \
                 .saveAsTable(f"{catalog_name}.{schema_name}.{table_name}")
+
+

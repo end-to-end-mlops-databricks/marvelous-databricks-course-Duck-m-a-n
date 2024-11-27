@@ -5,6 +5,7 @@ import yaml
 class PathsConfig(BaseModel):
     # Databricks paths
     raw_sales_path: str
+    raw_sales_future_path: str
     raw_calendar_path: str
     raw_sell_prices_path: str
     raw_weather_path: str
@@ -29,6 +30,7 @@ class Config(BaseModel):
     target: str
     cat_features: List[str]
     paths: PathsConfig
+    predefined_unique_ids: List[str]
     parameters: ParametersConfig
 
     @classmethod
